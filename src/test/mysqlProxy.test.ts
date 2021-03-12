@@ -94,9 +94,9 @@ describe("dbProxy", () => {
   });
 
   it("empty onQuery result works", async () => {
-    const { proxiedConn } = await setup();
+    const { proxiedConn, dbProxy } = await setup();
+    dbProxy.listener.onQuery = async (conn, query) => [];
     const [res] = (await proxiedConn.query("select 1")) as any;
-    console.log(res);
     expect(res.fieldCount).toStrictEqual(0);
   });
 
