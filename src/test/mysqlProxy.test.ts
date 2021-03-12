@@ -104,16 +104,13 @@ describe("dbProxy", () => {
   });
 
   it("client disconnects when proxy conn disconnects", async () => {
-    // connect to the actual db
-    const { directConn, proxiedConn } = await setup();
-    const [res] = (await directConn.query("show processlist")) as any;
+    const { dbProxy, proxiedConn } = await setup();
 
     return new Promise((resolve) => {
       proxiedConn.on("error", () => {
         resolve(null);
       });
-      // note: the proxy conn is the last one
-      directConn.query("kill " + res[res.length - 1].Id);
+      Object.values(dbProxy.connections)[0].proxyConn.destroy();
     });
   });
 
@@ -122,7 +119,7 @@ describe("dbProxy", () => {
   };
 
   it("proxy conn disconnects after client disconnects", async () => {
-    const { directConn, proxiedConn, dbProxy } = await setup();
+    const { proxiedConn, dbProxy } = await setup();
     const numConns = dbProxy.numProxyConns;
     await proxiedConn.end();
     // TODO find a less fragile way of testing this
