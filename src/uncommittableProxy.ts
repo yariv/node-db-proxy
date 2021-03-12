@@ -9,12 +9,9 @@ export class UncommittableProxy {
   mysqlProxy: MySqlProxy;
 
   constructor(port: number, remoteConnectionOptions: ConnectionOptions) {
-    // TODO group by token hash
-    const groupConnections = false;
     this.mysqlProxy = new MySqlProxy(
       port,
       remoteConnectionOptions,
-      groupConnections,
       onConn,
       onProxyConn,
       this.onQuery.bind(this)

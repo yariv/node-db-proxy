@@ -18,20 +18,18 @@ export class MySqlProxy {
     string,
     {
       proxyConn: Connection;
-      clientConns: Record<string, mysqlServer.Connection>;
+      clientConn: mysqlServer.Connection;
     }
   > = {};
   server: any;
   onConn: OnConn | undefined;
   onProxyConn: OnProxyConn | undefined;
   onQuery: OnQuery | undefined;
-  groupConnections: boolean;
 
   connCounter = 0;
   constructor(
     port: number,
     remoteConnectionOptions: ConnectionOptions,
-    groupConnections: boolean = false,
     onConn?: OnConn,
     onProxyConn?: OnProxyConn,
     onQuery?: OnQuery
@@ -44,74 +42,60 @@ export class MySqlProxy {
     this.onConn = onConn;
     this.onProxyConn = onProxyConn;
     this.onQuery = onQuery;
-    this.groupConnections = groupConnections;
   }
 
-  disconnectAll(connGroupKey: string) {
-    if (!(connGroupKey in this.connections)) {
-      return;
-    }
-    const connGroup = this.connections[connGroupKey];
-    Object.values(connGroup.clientConns).forEach((conn) => tryClose(conn));
-    tryClose(connGroup.proxyConn);
-    delete this.connections[connGroupKey];
+  disconnectAll() {
+    Object.values(this.connections).forEach(({ clientConn, proxyConn }) => {
+      tryClose(clientConn);
+      tryClose(proxyConn);
+    });
+    this.connections = {};
   }
 
   async handleIncomingConnection(conn: mysqlServer.Connection) {
     const connId = nanoid();
     (conn as any).proxyId = connId;
 
-    const connGroupKey = this.groupConnections ? "default" : nanoid();
     if (this.onConn) {
       await this.onConn(conn);
     }
-    (conn as any).connGroupKey = connGroupKey;
 
-    if (connGroupKey in this.connections) {
-      this.connections[connGroupKey].clientConns[connId] = conn;
-    } else {
+    let proxyConn: Connection;
+    try {
+      proxyConn = await mysql.createConnection(this.remoteConnectionOptions);
+    } catch (err) {
+      console.error("Can't connect to remote DB server", err);
+      tryClose(conn);
+      return;
+    }
+
+    if (this.onProxyConn) {
       try {
-        const proxyConn = await mysql.createConnection(
-          this.remoteConnectionOptions
-        );
-        // hack to get to the right listener
-        (proxyConn as any).connection.stream.on("close", () => {
-          this.disconnectAll(connGroupKey);
-        });
-        if (this.onProxyConn) {
-          try {
-            await this.onProxyConn(proxyConn);
-          } catch (e) {
-            tryClose(proxyConn);
-            tryClose(conn);
-            return;
-          }
-        }
-        this.connections[connGroupKey] = {
-          clientConns: { [connId]: conn },
-          proxyConn,
-        };
-      } catch (err) {
-        console.error("Can't connect to remote DB server", err);
+        await this.onProxyConn(proxyConn);
+      } catch (e) {
+        tryClose(proxyConn);
         tryClose(conn);
         return;
       }
     }
 
+    (proxyConn as any).connection.stream.on("close", () => {
+      tryClose(conn);
+      if (this.connections[connId]) {
+        tryClose(this.connections[connId].proxyConn);
+        delete this.connections[connId];
+      }
+    });
+
+    this.connections[connId] = { clientConn: conn, proxyConn };
     conn.on("query", this.processQuery.bind(this, conn));
     conn.on("error", (err: any) => {
       tryClose(conn);
     });
     (conn as any).stream.on("close", () => {
-      if (connGroupKey in this.connections) {
-        const connGroup = this.connections[connGroupKey];
-        delete connGroup.clientConns[connId];
-        if (
-          Object.keys(this.connections[connGroupKey].clientConns).length === 0
-        ) {
-          tryClose(connGroup.proxyConn);
-          this.connections[connGroupKey];
-        }
+      if (connId in this.connections) {
+        tryClose(this.connections[connId].proxyConn);
+        delete this.connections[connId];
       }
     });
     sendHandshake(conn);
@@ -121,14 +105,8 @@ export class MySqlProxy {
     return Object.keys(this.connections).length;
   }
 
-  getConnId(conn: mysqlServer.Connection): string {
-    return (conn as any).proxyId;
-  }
-
   async close() {
-    for (const connGroupKey of Object.keys(this.connections)) {
-      this.disconnectAll(connGroupKey);
-    }
+    this.disconnectAll();
     if (this.server) {
       await util.promisify(this.server.close.bind(this.server))();
     }
@@ -140,10 +118,10 @@ export class MySqlProxy {
   }
 
   async processQuery(conn: mysqlServer.Connection, query: string) {
-    const connGroupKey = (conn as any).connGroupKey;
-    const connGroup = this.connections[connGroupKey];
-    if (!connGroup) {
-      console.error("Missing connection group for ", connGroupKey);
+    const connId = (conn as any).proxyId;
+    const connPair = this.connections[connId];
+    if (!connPair) {
+      console.error("Missing connection group for ", connId);
       (conn as any).writeError({
         message: "Connection error",
       });
@@ -159,7 +137,7 @@ export class MySqlProxy {
         return;
       }
     }
-    await this.sendQueries(conn, connGroup.proxyConn, queries);
+    await this.sendQueries(conn, connPair.proxyConn, queries);
   }
 
   async sendQueries(
