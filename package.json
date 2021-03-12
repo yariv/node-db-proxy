@@ -1,0 +1,17 @@
+{
+  "name": "node-db-proxy",
+  "version": "1.0.0",
+  "description": "A database proxy for Node that supports uncommittable transactions",
+  "main": "index.js",
+  "repository": "https://github.com/yariv/node-db-proxy.git",
+  "author": "Yariv Sadan <yarivsadan@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "mysql2": "^2.2.5",
+    "nanoid": "^3.1.21",
+    "portfinder": "^1.0.28"
+  },
+  "devDependencies": {
+    "jest": "^26.6.3"
+  }
+}
