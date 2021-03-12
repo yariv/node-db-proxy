@@ -33,7 +33,7 @@ const dbProxy = new MySqlProxy(proxyPort, {
   password: "root",
   database: "test",
   port: 3305,
-});
+}, onConn, onProxyConn, onQuery);
 await dbProxy.listen();
 ```
 

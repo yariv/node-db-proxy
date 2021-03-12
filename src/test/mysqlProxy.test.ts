@@ -1,6 +1,6 @@
 import mysql, { Connection } from "mysql2/promise";
 import portfinder from "portfinder";
-import { MySqlProxy } from "../mysqlProxy";
+import { MySqlProxy, MySqlProxyListener } from "../mysqlProxy";
 import { setupTest } from "./setup";
 import { customAlphabet } from "nanoid";
 const nanoid = customAlphabet("1234567890abcdef", 10);
@@ -19,7 +19,16 @@ describe("dbProxy", () => {
   const setupProxy = async (): Promise<MySqlProxy> => {
     const proxyPort = await portfinder.getPortPromise();
 
-    const dbProxy = new MySqlProxy(proxyPort, { ...connOptions, port: dbPort });
+    const listener: MySqlProxyListener = {
+      onConn: async (conn) => {},
+      onProxyConn: async (proxyConn) => {},
+      onQuery: async (conn, query) => [query],
+    };
+    const dbProxy = new MySqlProxy(
+      proxyPort,
+      { ...connOptions, port: dbPort },
+      listener
+    );
     await dbProxy.listen();
     defer(dbProxy.close.bind(dbProxy));
     return dbProxy;
@@ -86,18 +95,16 @@ describe("dbProxy", () => {
 
   it("empty onQuery result works", async () => {
     const { proxiedConn, tableName, dbProxy } = await setup();
-    dbProxy.onQuery = async () => {
-      return [];
-    };
     const [res] = (await proxiedConn.query("select 1")) as any;
     expect(res.fieldCount).toStrictEqual(0);
   });
 
   it("multiple onQuery results works", async () => {
-    const { proxiedConn, tableName, dbProxy } = await setup();
-    dbProxy.onQuery = async () => {
-      return ["select 1", "select 2 as a"];
-    };
+    const { proxiedConn, dbProxy } = await setup();
+    dbProxy.listener.onQuery = async (conn, query) => [
+      "select 1",
+      "select 2 as a",
+    ];
     const [res] = (await proxiedConn.query("select 1")) as any;
     expect(res.length).toStrictEqual(1);
     expect(res[0].a).toStrictEqual(2);
@@ -158,7 +165,7 @@ describe("dbProxy", () => {
   it("onProxyConn works", async () => {
     const dbProxy = await setupProxy();
     const promise = new Promise((resolve) => {
-      dbProxy.onProxyConn = async (conn) => {
+      dbProxy.listener.onProxyConn = async (conn) => {
         const [[res]] = (await conn.query("select 1 as a")) as any;
         expect(res.a).toStrictEqual(1);
         resolve(null);
@@ -177,7 +184,7 @@ describe("dbProxy", () => {
     await checkNumConns(dbProxy, 0);
 
     let called = false;
-    dbProxy.onConn = async (conn) => {
+    dbProxy.listener.onConn = async (conn) => {
       called = true;
     };
     const conn1 = await mysql.createConnection({
@@ -199,16 +206,16 @@ describe("dbProxy", () => {
     });
     await checkNumConns(dbProxy, 1);
 
-    // conn2.destroy();
-    // await new Promise((resolve) => {
-    //   setTimeout(resolve, 5);
-    // });
-    // await checkNumConns(dbProxy, 0);
+    conn2.destroy();
+    await new Promise((resolve) => {
+      setTimeout(resolve, 10);
+    });
+    await checkNumConns(dbProxy, 0);
   });
 
   it("onProxyConn throws", async () => {
     const dbProxy = await setupProxy();
-    dbProxy.onProxyConn = async (conn) => {
+    dbProxy.listener.onProxyConn = async (conn) => {
       throw new Error("foo");
     };
     try {

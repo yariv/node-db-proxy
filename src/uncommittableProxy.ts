@@ -1,7 +1,6 @@
 import mysql2 from "mysql2";
-import { Connection } from "mysql2/promise";
 import { ConnectionOptions } from "mysql2/typings/mysql";
-import { MySqlProxy, OnConn, OnProxyConn } from "./mysqlProxy";
+import { MySqlProxy, MySqlProxyListener } from "./mysqlProxy";
 
 const crudQueryRe = /^(SELECT|INSERT|UPDATE|DELETE|BEGIN|START TRANSACTION|COMMIT|ROLLBACK)/i;
 
@@ -9,13 +8,16 @@ export class UncommittableProxy {
   mysqlProxy: MySqlProxy;
 
   constructor(port: number, remoteConnectionOptions: ConnectionOptions) {
-    this.mysqlProxy = new MySqlProxy(
-      port,
-      remoteConnectionOptions,
-      onConn,
-      onProxyConn,
-      this.onQuery.bind(this)
-    );
+    const listener: MySqlProxyListener = {
+      onConn: async (conn) => {
+        (conn as any).inTransaction = false;
+      },
+      onProxyConn: async (proxyConn) => {
+        await proxyConn.query("BEGIN");
+      },
+      onQuery: this.onQuery.bind(this),
+    };
+    this.mysqlProxy = new MySqlProxy(port, remoteConnectionOptions, listener);
   }
 
   async listen() {
@@ -27,30 +29,28 @@ export class UncommittableProxy {
   }
 
   async onQuery(conn: mysql2.Connection, query: string) {
-    const devInProdConn = (conn as unknown) as DevInProdConn;
-    const devInProdData = devInProdConn.devInProdData;
-
     if (!crudQueryRe.test(query)) {
       throw new Error("Invalid query: " + query);
     }
 
+    const inTransaction = (conn as any).inTransaction;
     if (/^(BEGIN|START TRANSACTION)/i.test(query)) {
-      if (devInProdData.inTransaction) {
+      if (inTransaction) {
         return ["RELEASE SAVEPOINT s1", "SAVEPOINT s1"];
       }
-      devInProdData.inTransaction = true;
+      (conn as any).inTransaction = true;
       return ["SAVEPOINT s1"];
     }
     if (/^COMMIT/i.test(query)) {
-      if (devInProdData.inTransaction) {
+      if (inTransaction) {
         return ["RELEASE SAVEPOINT s1"];
       }
       // Ignore COMMIT statements
       return [];
     }
     if (/^ROLLBACK/i.test(query)) {
-      if (devInProdData.inTransaction) {
-        devInProdData.inTransaction = false;
+      if (inTransaction) {
+        (conn as any).inTransaction = false;
         return ["ROLLBACK TO SAVEPOINT s1"];
       }
       // Ignore ROLLBACK statements
@@ -59,18 +59,4 @@ export class UncommittableProxy {
 
     return [query];
   }
-}
-
-const onConn: OnConn = async (conn) => {
-  (conn as any).devInProdData = new DevInProdConnData();
-};
-
-type DevInProdConn = Connection & { devInProdData: DevInProdConnData };
-
-const onProxyConn: OnProxyConn = async (conn) => {
-  await conn.query("BEGIN");
-};
-
-class DevInProdConnData {
-  inTransaction = false;
 }

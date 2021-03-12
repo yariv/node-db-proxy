@@ -4,12 +4,19 @@ import { ConnectionOptions } from "mysql2/typings/mysql/lib/Connection";
 import util from "util";
 import { nanoid } from "nanoid";
 
-export type OnConn = (conn: mysqlServer.Connection) => Promise<void>;
-export type OnProxyConn = (conn: Connection) => Promise<void>;
-export type OnQuery = (
-  conn: mysqlServer.Connection,
-  query: string
-) => Promise<string[]>;
+export interface MySqlProxyListener {
+  // Called when a client connection is made to the proxy
+  onConn(conn: mysqlServer.Connection): Promise<void>;
+
+  // Called when the proxy establishes a connection to the server
+  onProxyConn(conn: Connection): Promise<void>;
+
+  // Called when the client connection sends a query to the proxy.
+  // The return value is one or more queries that the proxy
+  // should send to the server in place of the original query.
+  // (To forward the same query unchanged, simply return [query]).
+  onQuery(conn: mysqlServer.Connection, query: string): Promise<string[]>;
+}
 
 export class MySqlProxy {
   port: number;
@@ -22,26 +29,20 @@ export class MySqlProxy {
     }
   > = {};
   server: any;
-  onConn: OnConn | undefined;
-  onProxyConn: OnProxyConn | undefined;
-  onQuery: OnQuery | undefined;
+  listener: MySqlProxyListener;
 
   connCounter = 0;
   constructor(
     port: number,
     remoteConnectionOptions: ConnectionOptions,
-    onConn?: OnConn,
-    onProxyConn?: OnProxyConn,
-    onQuery?: OnQuery
+    listener: MySqlProxyListener
   ) {
     this.port = port;
     this.remoteConnectionOptions = remoteConnectionOptions;
     // note: createServer isn't exported by default
     this.server = (mysqlServer as any).createServer();
     this.server.on("connection", this.handleIncomingConnection.bind(this));
-    this.onConn = onConn;
-    this.onProxyConn = onProxyConn;
-    this.onQuery = onQuery;
+    this.listener = listener;
   }
 
   disconnectAll() {
@@ -56,9 +57,7 @@ export class MySqlProxy {
     const connId = nanoid();
     (conn as any).proxyId = connId;
 
-    if (this.onConn) {
-      await this.onConn(conn);
-    }
+    await this.listener.onConn(conn);
 
     let proxyConn: Connection;
     try {
@@ -69,14 +68,12 @@ export class MySqlProxy {
       return;
     }
 
-    if (this.onProxyConn) {
-      try {
-        await this.onProxyConn(proxyConn);
-      } catch (e) {
-        tryClose(proxyConn);
-        tryClose(conn);
-        return;
-      }
+    try {
+      await this.listener.onProxyConn(proxyConn);
+    } catch (e) {
+      tryClose(proxyConn);
+      tryClose(conn);
+      return;
     }
 
     (proxyConn as any).connection.stream.on("close", () => {
@@ -129,13 +126,11 @@ export class MySqlProxy {
     }
 
     let queries = [query];
-    if (this.onQuery) {
-      try {
-        queries = await this.onQuery(conn, query);
-      } catch (e) {
-        await (conn as any).writeError({ message: e.message });
-        return;
-      }
+    try {
+      queries = await this.listener.onQuery(conn, query);
+    } catch (e) {
+      await (conn as any).writeError({ message: e.message });
+      return;
     }
     await this.sendQueries(conn, connPair.proxyConn, queries);
   }
