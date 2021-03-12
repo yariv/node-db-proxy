@@ -20,6 +20,10 @@ Here's an example of how a series of DB statements would be translated by the DB
 | DELETE FROM table_name                      | DELETE FROM table_name                      |
 | COMMIT                                      |                                             |
 
+As a word of warning, it's not advised to use the Uncommitable proxy directly against your production database.
+It would be much safer to use the Uncommitable proxy against a replica. You should also make sure access to the Uncommitable
+proxy is secure (it hasn't been tested with SSL) so avoid leaking sensitive data.
+
 # Usage
 
 To instantiate a simple MySQL proxy, follow the following example
@@ -27,13 +31,27 @@ To instantiate a simple MySQL proxy, follow the following example
 ```typescript
 import { MySqlProxy } from "node-db-proxy";
 
-const dbProxy = new MySqlProxy(proxyPort, {
+const listener: MySqlProxyListener = {
+  // Called when a client connection is made to the proxy
+  onConn: async (conn) => {},
+
+  // Called when a connection is made to the server
+  onProxyConn: async (proxyConn) => {},
+
+  // Called when a client connection sends a query to the proxy.
+  // The return value is an array of SQL queries to be sent
+  // to the DB server. This default implementation forwards
+  // the original query.
+  onQuery: async (conn, query) => [query],
+};
+const connectionOptions = {
   host: "127.0.0.1",
   user: "root",
   password: "root",
   database: "test",
   port: 3305,
-}, onConn, onProxyConn, onQuery);
+};
+const dbProxy = new MySqlProxy(proxyPort, connectionOptions);
 await dbProxy.listen();
 ```
 
@@ -42,3 +60,18 @@ If you want the proxy to stop listening (which can be useful in unit tests), cal
 ```typescript
 await dbProxy.stop();
 ```
+
+The example below shows how to create an uncommitable proxy:
+
+```typescript
+const uncommittableProxy = new UncommittableProxy(port, connectionOptions);
+```
+
+Similar to the simple proxy, this is how you close it:
+
+```typescript
+await uncommittableProxy.close();
+```
+
+You're encouraged to look at the unit tests to see how the Uncommitable proxy handles
+different edge cases.
