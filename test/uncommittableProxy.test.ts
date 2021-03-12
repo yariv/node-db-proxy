@@ -1,6 +1,6 @@
 import mysql, { Connection, ConnectionOptions } from "mysql2/promise";
 import portfinder from "portfinder";
-import { UncommittableProxy } from "../uncommittableProxy";
+import { UncommittableProxy } from "../src/uncommittableProxy";
 import { setupTest } from "./setup";
 import { customAlphabet } from "nanoid";
 const nanoid = customAlphabet("1234567890abcdef", 10);

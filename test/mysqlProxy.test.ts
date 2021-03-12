@@ -1,11 +1,11 @@
 import mysql, { Connection } from "mysql2/promise";
 import portfinder from "portfinder";
-import { MySqlProxy, MySqlProxyListener } from "../mysqlProxy";
+import { MySqlProxy, MySqlProxyListener } from "../src/mysqlProxy";
 import { setupTest } from "./setup";
 import { customAlphabet } from "nanoid";
 const nanoid = customAlphabet("1234567890abcdef", 10);
 
-describe("dbProxy", () => {
+describe("MySqlProxy test", () => {
   const defer = setupTest();
 
   const connOptions = {
