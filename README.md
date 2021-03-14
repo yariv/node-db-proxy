@@ -20,9 +20,12 @@ Here's an example of how a series of DB statements would be translated by the DB
 | DELETE FROM table_name                      | DELETE FROM table_name                      |
 | COMMIT                                      |                                             |
 
-As a word of warning, it's not advised to use the Uncommitable proxy directly against your production database.
-It would be much safer to use the Uncommitable proxy against a replica. You should also make sure access to the Uncommitable
-proxy is secure (it hasn't been tested with SSL) so avoid leaking sensitive data.
+# Warnings
+
+- It's not advised to use the Uncommitable proxy directly against your production database.
+It's safer to use the Uncommitable proxy against a replica.
+- You should also make sure access to the Uncommitable proxy is secure (it hasn't been tested with SSL) so avoid leaking sensitive data.
+- Although CRUD operations sent through this proxy can't be committed, they can hold row locks and consume memory. It's not recommended to use this proxy for very long lived sessions that cause significant lock contention.
 
 # Usage
 
